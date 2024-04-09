@@ -81,7 +81,7 @@ func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 
 // Add appends a batch of transactions to the pool, and notifies any
 // listeners if the addition channel is non nil
-func (p *testTxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
+func (p *testTxPool) Add(txs []*types.Transaction, local bool, sync bool, private bool) []error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -116,6 +116,7 @@ func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 				GasTipCap: uint256.MustFromBig(tx.GasTipCap()),
 				Gas:       tx.Gas(),
 				BlobGas:   tx.BlobGas(),
+				GasPrice:  uint256.MustFromBig(tx.GasPrice()),
 			})
 		}
 	}
@@ -126,6 +127,11 @@ func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 // send events to the given channel.
 func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
 	return p.txFeed.Subscribe(ch)
+}
+
+// IsPrivateTxHash always returns false in tests
+func (p *testTxPool) IsPrivateTxHash(hash common.Hash) bool {
+	return false
 }
 
 // testHandler is a live implementation of the Ethereum protocol handler, just

@@ -42,6 +42,8 @@ type BuildPayloadArgs struct {
 	Withdrawals  types.Withdrawals     // The provided withdrawals
 	BeaconRoot   *common.Hash          // The provided beaconRoot (Cancun)
 	Version      engine.PayloadVersion // Versioning byte for payload id calculation.
+	GasLimit     uint64
+	BlockHook    BlockHookFn
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
@@ -50,6 +52,7 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	hasher := sha256.New()
 	hasher.Write(args.Parent[:])
 	binary.Write(hasher, binary.BigEndian, args.Timestamp)
+	binary.Write(hasher, binary.BigEndian, args.GasLimit)
 	hasher.Write(args.Random[:])
 	hasher.Write(args.FeeRecipient[:])
 	rlp.Encode(hasher, args.Withdrawals)
@@ -85,7 +88,7 @@ func newPayload(empty *types.Block, id engine.PayloadID) *Payload {
 		empty: empty,
 		stop:  make(chan struct{}),
 	}
-	log.Info("Starting work on payload", "id", payload.id)
+
 	payload.cond = sync.NewCond(&payload.lock)
 	return payload
 }
@@ -124,6 +127,63 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 	payload.cond.Broadcast() // fire signal for notifying full block
 }
 
+func (payload *Payload) resolveBestFullPayload(payloads []*Payload) {
+	payload.lock.Lock()
+	defer payload.lock.Unlock()
+
+	log.Trace("resolving best payload")
+	for _, p := range payloads {
+		p.lock.Lock()
+
+		if p.full == nil {
+			select {
+			case <-p.stop:
+				p.lock.Unlock()
+				continue
+			default:
+				p.cond.Wait()
+			}
+
+			if p.full == nil {
+				p.lock.Unlock()
+				continue
+			}
+		}
+		if payload.full == nil || payload.fullFees.Cmp(p.fullFees) < 0 {
+			log.Trace("best payload updated", "id", p.id, "blockHash", p.full.Hash())
+			payload.full = p.full
+			payload.fullFees = p.fullFees
+			payload.sidecars = p.sidecars
+		}
+		p.lock.Unlock()
+	}
+
+	// Since we are not expecting any updates, close the payload already
+	select {
+	case <-payload.stop:
+	default:
+		close(payload.stop)
+	}
+
+	payload.cond.Broadcast() // fire signal for notifying full block
+
+	if payload.full != nil {
+		log.Trace("best payload resolved", "id", payload.id, "blockHash", payload.full.Hash())
+	} else {
+		log.Trace("no payload resolved", "id", payload.id)
+	}
+}
+
+func (payload *Payload) Cancel() {
+	select {
+	case <-payload.stop:
+	default:
+		close(payload.stop)
+	}
+
+	payload.cond.Broadcast()
+}
+
 // Resolve returns the latest built payload and also terminates the background
 // thread for updating payload. It's safe to be called multiple times.
 func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
@@ -135,6 +195,7 @@ func (payload *Payload) Resolve() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
+
 	if payload.full != nil {
 		return engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars)
 	}
@@ -173,6 +234,11 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
+
+	if payload.full == nil {
+		return nil
+	}
+
 	return engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars)
 }
 
@@ -190,6 +256,7 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		withdrawals: args.Withdrawals,
 		beaconRoot:  args.BeaconRoot,
 		noTxs:       true,
+		onBlock:     args.BlockHook,
 	}
 	empty := w.getSealingBlock(emptyParams)
 	if empty.err != nil {
@@ -221,6 +288,7 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 			withdrawals: args.Withdrawals,
 			beaconRoot:  args.BeaconRoot,
 			noTxs:       false,
+			onBlock:     args.BlockHook,
 		}
 
 		for {

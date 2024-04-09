@@ -26,7 +26,10 @@ test: all
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
-#? clean: Clean go cache, built executables, and the auto generated folder
+fmt:
+	go fmt
+	go mod tidy
+
 clean:
 	go clean -cache
 	rm -fr build/_workspace/pkg/ $(GOBIN)/*

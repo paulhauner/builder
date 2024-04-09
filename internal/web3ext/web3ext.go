@@ -547,6 +547,12 @@ web3._extend({
 			inputFormatter: [web3._extend.formatters.inputTransactionFormatter]
 		}),
 		new web3._extend.Method({
+ 			name: 'sendPrivateRawTransaction',
+ 			call: 'eth_sendPrivateRawTransaction',
+ 			params: 1,
+ 			inputFormatter: [null]
+ 		}),
+		new web3._extend.Method({
 			name: 'fillTransaction',
 			call: 'eth_fillTransaction',
 			params: 1,
@@ -612,10 +618,20 @@ web3._extend({
 			params: 1,
 		}),
 		new web3._extend.Method({
+			name: 'sendBundle',
+			call: 'eth_sendBundle',
+			params: 1,
+		}),
+		new web3._extend.Method({
+			name: 'callBundle',
+			call: 'eth_callBundle',
+			params: 6
+		}),
+		new web3._extend.Method({
 			name: 'call',
 			call: 'eth_call',
-			params: 4,
-			inputFormatter: [web3._extend.formatters.inputCallFormatter, web3._extend.formatters.inputDefaultBlockNumberFormatter, null, null],
+			params: 3,
+			inputFormatter: [web3._extend.formatters.inputCallFormatter, web3._extend.formatters.inputDefaultBlockNumberFormatter, null],
 		}),
 		new web3._extend.Method({
 			name: 'getBlockReceipts',
