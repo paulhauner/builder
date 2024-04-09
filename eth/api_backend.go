@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/google/uuid"
 )
 
 // EthAPIBackend implements ethapi.Backend and tracers.Backend for full nodes
@@ -287,8 +288,24 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 	return b.eth.BlockChain().SubscribeLogsEvent(ch)
 }
 
-func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	return b.eth.txPool.Add([]*types.Transaction{signedTx}, true, false)[0]
+func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error {
+	if private {
+		return b.eth.txPool.Add([]*types.Transaction{signedTx}, true, false, true)[0]
+	} else {
+		return b.eth.txPool.Add([]*types.Transaction{signedTx}, true, false, false)[0]
+	}
+}
+
+func (b *EthAPIBackend) SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, uuid uuid.UUID, signingAddress common.Address, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	return b.eth.txPool.AddMevBundle(txs, big.NewInt(blockNumber.Int64()), uuid, signingAddress, minTimestamp, maxTimestamp, revertingTxHashes)
+}
+
+func (b *EthAPIBackend) SendSBundle(ctx context.Context, sbundle *types.SBundle) error {
+	return b.eth.txPool.AddSBundle(sbundle)
+}
+
+func (b *EthAPIBackend) CancelSBundles(ctx context.Context, hashes []common.Hash) {
+	b.eth.txPool.CancelSBundles(hashes)
 }
 
 func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {

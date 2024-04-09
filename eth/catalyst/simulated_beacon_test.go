@@ -111,7 +111,7 @@ func TestSimulatedBeaconSendWithdrawals(t *testing.T) {
 		}
 		txs[tx.Hash()] = *tx
 
-		if err := ethService.APIBackend.SendTx(context.Background(), tx); err != nil {
+		if err := ethService.APIBackend.SendTx(context.Background(), tx, false); err != nil {
 			t.Fatal("SendTx failed", err)
 		}
 	}

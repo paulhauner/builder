@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/google/uuid"
 )
 
 // TestSetFeeDefaults tests the logic for filling in default fee values works as expected.
@@ -259,6 +260,21 @@ type backendMock struct {
 	config  *params.ChainConfig
 }
 
+func (b *backendMock) SendMegabundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash, relayAddr common.Address) error {
+	return nil
+}
+
+func (b *backendMock) SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, replacementUuid uuid.UUID, signingAddress common.Address, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	return nil
+}
+
+func (b *backendMock) SendSBundle(ctx context.Context, sbundle *types.SBundle) error {
+	return nil
+}
+
+func (b *backendMock) CancelSBundles(ctx context.Context, hashes []common.Hash) {
+}
+
 func newBackendMock() *backendMock {
 	var cancunTime uint64 = 600
 	config := &params.ChainConfig{
@@ -376,7 +392,9 @@ func (b *backendMock) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) eve
 func (b *backendMock) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
 	return nil
 }
-func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }
+func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error {
+	return nil
+}
 func (b *backendMock) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
 	return false, nil, [32]byte{}, 0, 0, nil
 }

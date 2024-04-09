@@ -48,5 +48,7 @@ profile.cov
 
 **/yarn-error.log
 logs/
+/ofac_blacklist.json
+/blacklist.json
 
 tests/spec-tests/

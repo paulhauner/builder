@@ -117,6 +117,9 @@ type StateDB struct {
 	validRevisions []revision
 	nextRevisionId int
 
+	// Multi-Transaction Snapshot Stack
+	multiTxSnapshotStack *MultiTxSnapshotStack
+
 	// Measurements gathered during execution for debugging purposes
 	AccountReads         time.Duration
 	AccountHashes        time.Duration
@@ -166,6 +169,8 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 		transientStorage:     newTransientStorage(),
 		hasher:               crypto.NewKeccakState(),
 	}
+
+	sdb.multiTxSnapshotStack = NewMultiTxSnapshotStack(sdb)
 	if sdb.snaps != nil {
 		sdb.snap = sdb.snaps.Snapshot(root)
 	}
@@ -712,6 +717,8 @@ func (s *StateDB) Copy() *StateDB {
 		snaps: s.snaps,
 		snap:  s.snap,
 	}
+	// Initialize copy of multi-transaction snapshot stack for the copied state
+	state.multiTxSnapshotStack = s.multiTxSnapshotStack.Copy(state)
 	// Copy the dirty states, logs, and preimages
 	for addr := range s.journal.dirties {
 		// As documented [here](https://github.com/ethereum/go-ethereum/pull/16485#issuecomment-380438527),
@@ -783,6 +790,11 @@ func (s *StateDB) Copy() *StateDB {
 	if s.prefetcher != nil {
 		state.prefetcher = s.prefetcher.copy()
 	}
+
+	if metrics.EnabledBuilder {
+		stateCopyMeter.Mark(1)
+	}
+
 	return state
 }
 
@@ -791,6 +803,11 @@ func (s *StateDB) Snapshot() int {
 	id := s.nextRevisionId
 	s.nextRevisionId++
 	s.validRevisions = append(s.validRevisions, revision{id, s.journal.length()})
+
+	if metrics.EnabledBuilder {
+		stateSnapshotMeter.Mark(1)
+	}
+
 	return id
 }
 
@@ -819,6 +836,8 @@ func (s *StateDB) GetRefund() uint64 {
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+	s.multiTxSnapshotStack.UpdateFromJournal(s.journal)
+
 	addressesToPrefetch := make([][]byte, 0, len(s.journal.dirties))
 	for addr := range s.journal.dirties {
 		obj, exist := s.stateObjects[addr]
@@ -832,6 +851,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			continue
 		}
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
+			s.multiTxSnapshotStack.UpdateObjectDeleted(obj.address, obj.deleted)
+
 			obj.deleted = true
 
 			// We need to maintain account deletions explicitly (will remain
@@ -849,6 +870,12 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			delete(s.storagesOrigin, obj.address) // Clear out any previously updated storage data (may be recreated via a resurrect)
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
+		}
+
+		if s.multiTxSnapshotStack.Size() > 0 {
+			_, wasPending := s.stateObjectsPending[addr]
+			_, wasDirty := s.stateObjectsDirty[addr]
+			s.multiTxSnapshotStack.UpdatePendingStatus(addr, wasPending, wasDirty)
 		}
 		obj.created = false
 		s.stateObjectsPending[addr] = struct{}{}
@@ -872,6 +899,10 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// Finalise all the dirty storage states and write them into the tries
 	s.Finalise(deleteEmptyObjects)
+
+	// Intermediate root writes updates to the trie, which will cause
+	// in memory multi-transaction snapshot to be incompatible with the committed state, so we invalidate.
+	s.multiTxSnapshotStack.Invalidate()
 
 	// If there was a trie prefetcher operating, it gets aborted and irrevocably
 	// modified after we start retrieving tries. Remove it from the statedb after
@@ -1386,6 +1417,25 @@ func (s *StateDB) convertAccountSet(set map[common.Address]*types.StateAccount) 
 		}
 	}
 	return ret
+}
+
+func (s *StateDB) NewMultiTxSnapshot() (err error) {
+	_, err = s.multiTxSnapshotStack.NewSnapshot()
+	return
+}
+
+func (s *StateDB) MultiTxSnapshotRevert() (err error) {
+	_, err = s.multiTxSnapshotStack.Revert()
+	return
+}
+
+func (s *StateDB) MultiTxSnapshotCommit() (err error) {
+	_, err = s.multiTxSnapshotStack.Commit()
+	return
+}
+
+func (s *StateDB) MultiTxSnapshotStackSize() int {
+	return s.multiTxSnapshotStack.Size()
 }
 
 // copySet returns a deep-copied set.

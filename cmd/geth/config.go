@@ -31,9 +31,11 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/accounts/usbwallet"
+	"github.com/ethereum/go-ethereum/builder"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	blockvalidationapi "github.com/ethereum/go-ethereum/eth/block-validation"
 	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -95,6 +97,7 @@ type gethConfig struct {
 	Node     node.Config
 	Ethstats ethstatsConfig
 	Metrics  metrics.Config
+	Builder  builder.Config
 }
 
 func loadConfig(file string, cfg *gethConfig) error {
@@ -131,6 +134,7 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 		Eth:     ethconfig.Defaults,
 		Node:    defaultNodeConfig(),
 		Metrics: metrics.DefaultConfig,
+		Builder: builder.DefaultConfig,
 	}
 
 	// Load config file.
@@ -163,6 +167,9 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	}
 	applyMetricConfig(ctx, &cfg)
 
+	// Apply builder flags
+	utils.SetBuilderConfig(ctx, &cfg.Builder)
+
 	return stack, cfg
 }
 
@@ -177,7 +184,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
 		cfg.Eth.OverrideVerkle = &v
 	}
-	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth, &cfg.Builder)
 
 	// Create gauge with geth system and build information
 	if eth != nil { // The 'eth' backend may be nil in light mode
@@ -196,7 +203,22 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	// Configure log filter RPC API.
 	filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
 
-	// Configure GraphQL if requested.
+	bvConfig := blockvalidationapi.BlockValidationConfig{}
+	if ctx.IsSet(utils.BuilderBlockValidationBlacklistSourceFilePath.Name) {
+		bvConfig.BlacklistSourceFilePath = ctx.String(utils.BuilderBlockValidationBlacklistSourceFilePath.Name)
+	}
+	if ctx.IsSet(utils.BuilderBlockValidationUseBalanceDiff.Name) {
+		bvConfig.UseBalanceDiffProfit = ctx.Bool(utils.BuilderBlockValidationUseBalanceDiff.Name)
+	}
+	if ctx.IsSet(utils.BuilderBlockValidationExcludeWithdrawals.Name) {
+		bvConfig.ExcludeWithdrawals = ctx.Bool(utils.BuilderBlockValidationExcludeWithdrawals.Name)
+	}
+
+	if err := blockvalidationapi.Register(stack, eth, bvConfig); err != nil {
+		utils.Fatalf("Failed to register the Block Validation API: %v", err)
+	}
+
+	// Configure GraphQL if requested
 	if ctx.IsSet(utils.GraphQLEnabledFlag.Name) {
 		utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
 	}
@@ -265,6 +287,9 @@ func applyMetricConfig(ctx *cli.Context, cfg *gethConfig) {
 	}
 	if ctx.IsSet(utils.MetricsEnabledExpensiveFlag.Name) {
 		cfg.Metrics.EnabledExpensive = ctx.Bool(utils.MetricsEnabledExpensiveFlag.Name)
+	}
+	if ctx.IsSet(utils.MetricsEnabledBuilderFlag.Name) {
+		cfg.Metrics.EnabledBuilder = ctx.Bool(utils.MetricsEnabledBuilderFlag.Name)
 	}
 	if ctx.IsSet(utils.MetricsHTTPFlag.Name) {
 		cfg.Metrics.HTTP = ctx.String(utils.MetricsHTTPFlag.Name)
